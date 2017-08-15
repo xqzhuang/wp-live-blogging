@@ -23,6 +23,7 @@ class XQ_Live_Blogging{
 	
 	public function __construct(){
 		add_action('init', array($this, 'lb_init'));
+		add_action('init', array($this, 'add_lb_entries_caps'));
 		add_action('admin_menu', array( $this, 'lb_add_meta_boxes'));
 		add_filter('the_title', array($this, 'lb_entry_content'), 10, 2);		
 		
@@ -44,11 +45,10 @@ class XQ_Live_Blogging{
 		// display the entries to live blog.
 		add_action('wp_ajax_lb_update_live_blog', array( $this, 'lb_update_live_blog'));		
 		// action to display live blog in the front end.
-		add_action( 'template_redirect', array($this, 'lb_ajax_update_live_blog'));
+		add_action('template_redirect', array($this, 'lb_ajax_update_live_blog'));
 		
-		//add_filter( 'template_redirect', array( __CLASS__, 'lb_display_live_blog' ), 9 );
 		// indicate live post
-		add_filter( 'display_post_states', array( $this, 'add_display_post_state' ), 10, 2 );
+		add_filter('display_post_states', array( $this, 'add_display_post_state' ), 10, 2);
 	}	
 
 	/**
@@ -66,15 +66,20 @@ class XQ_Live_Blogging{
 			'not_found'             => __( 'No entries found.', 'textdomain' )			
 		);
 		
-		register_post_type(self::POST_TYPE,
-                       [
-						   'labels'		 => $labels,
-                           'public'      => true,
-						   'show_ui'     => true,
-						   'supports' 	 => array('title', 'editor', 'author'),
-						   'publicly_queryable' => true
-					]
-		);
+		// Simply not registering post type while user is contributor or subscriber role.
+		if(!(strtolower($this->get_current_user_role()) == 'contributor' || strtolower($this->get_current_user_role()) == 'subscriber')){
+			register_post_type(self::POST_TYPE,
+						   [
+							   'labels'		 		=> $labels,
+							   'public'      		=> true,
+							   'show_ui'     		=> true,
+							   'supports' 	 		=> array('title', 'editor', 'author'),
+							   //'capability_type' 	=> array('lb_entry', self::POST_TYPE),
+							   //'map_meta_cap' 		=> true,
+							   'publicly_queryable' => true
+						]
+			);
+		}
 	}
 
 	/**
@@ -104,16 +109,34 @@ class XQ_Live_Blogging{
 			'lb_entries',         
 			'side'        
 		);		
-		
-		add_meta_box(
-			'lb_entries_in_blog_meta_box',
-			__('Entries', 'textdomain'),
-			array( $this, 'lb_entries_in_blog_meta_box'),
-			'page',
-			'normal'
-		);
 	}	
+	
+	/**
+	 * Return the current login user role name.
+	 */
+	public function get_current_user_role() {
+		global $wp_roles;
+		$current_user = wp_get_current_user();
+		$roles = $current_user->roles;
+		$role = array_shift($roles);
+		return isset($wp_roles->role_names[$role]) ? translate_user_role($wp_roles->role_names[$role] ) : false;
+	}
 		
+	/**
+	 * Adding capability for roles. Only allow Author or higher to add new entry.
+	 * It's not using in this version.
+	 * TODO: checking why here doesn't work
+	 */
+	public function add_lb_entries_caps(){
+		global $wp_roles;
+		
+		$role = get_role('contributor');
+		$role->remove_cap('edit_lb_entries');
+		$role->remove_cap('read_lb_entries');
+		$role->remove_cap('publish_lb_entries');
+		$role->remove_cap('publish_lb_entry');
+	}		
+	
 	/**
 	 * Display the option for user to set the post as live blog.
 	 */
@@ -133,14 +156,12 @@ class XQ_Live_Blogging{
 			<input type="checkbox" name="lb-post-enable-box" id="lb-post-enable-box" value="0" size="30" <?php if($lb_enabled) echo 'checked = checked'; ?>/>
 		</p>
 		<?php 
-	}
-	
+	}	
 		
 	/**
 	 * Display the content instead of title for entries.
 	 */
-	public function lb_entry_content($title, $id = 0)
-	{
+	public function lb_entry_content($title, $id = 0){
 		$post = get_post($id);
 		if ($id != 0 && self::POST_TYPE == $post->post_type)
 		{
@@ -158,7 +179,7 @@ class XQ_Live_Blogging{
 		switch ($column_name)
 		{
 			case 'lb':
-			echo '<a href="post.php?post=' . $page->ID . '&amp;action=edit">' . $post->post_title . '</a>';
+				echo '<a href="post.php?post=' . $page->ID . '&amp;action=edit">' . $post->post_title . '</a>';
 
 			break;
 		}
@@ -168,7 +189,7 @@ class XQ_Live_Blogging{
 	 * Adding new column for showing live blog
 	 */	
 	public function lb_columns($columns){
-		$columns['lb'] = __('Live Blog', 'live-blogging');
+		$columns['lb'] = __('Live Blog', 'textdomain');
 		return $columns;
 	}
 	
@@ -176,7 +197,7 @@ class XQ_Live_Blogging{
 	 * Indicate in the post list that a post is a liveblog
 	 *
 	 */
-	public function add_display_post_state( $post_states, $post = null ) {
+	public function add_display_post_state( $post_states, $post = null ){
 		if ( is_null( $post ) ) {
 			$post = get_post();
 		}
@@ -205,7 +226,7 @@ class XQ_Live_Blogging{
 	/**
 	 * Indicate if the live blog is active.
 	 */
-	public function get_liveblog_state( $post_id = null ) {
+	public function get_liveblog_state( $post_id = null ){
 		if (! is_single() && ! is_admin()) {
 			return false;
 		}
@@ -225,7 +246,7 @@ class XQ_Live_Blogging{
 	/**
 	 * Display the side dropdown for selecting live blog to create entry.
 	 */
-	public function lb_new_entry_meta_box() {
+	public function lb_new_entry_meta_box(){
 		global $post;
 		wp_nonce_field('lb_new_entry_meta_box', 'lb_post_nonce');
 		
@@ -253,10 +274,9 @@ class XQ_Live_Blogging{
 		$args['post_type'] = 'page';
 		$q = new WP_Query($args);
 		
-		while ($q->have_posts())
-		{
+		while ($q->have_posts()){
 			$q->next_post();
-			if(!get_liveblog_state($q->post->ID)){
+			if(!$this->get_liveblog_state($q->post->ID)){
 				continue;
 			}
 			$lblogs[$q->post->ID] = esc_attr($q->post->post_title);
@@ -266,7 +286,7 @@ class XQ_Live_Blogging{
 		<label for="lb_entry_post"><?php _e('Select live blog to post', 'textdomain' ); ?></label><br/>
 		<select id="lb_entry_post" name="lb_entry_post">
 		<?php foreach ($lblogs as $lbid => $lbname) { ?>
-        <option value="<?php echo $lbid; ?>"><?php echo $lbname; ?></option>
+			<option value="<?php echo $lbid; ?>"><?php echo $lbname; ?></option>
 		<?php } ?>
 		</select>
   
@@ -306,7 +326,7 @@ class XQ_Live_Blogging{
 	 * Action for ajax to update live blog entries.
 	 * @return Objects of entry
 	 */
-	public function lb_update_live_blog() {
+	public function lb_update_live_blog(){
 		$post_id = $_POST["post_id"];
 		
 		if(!get_post_meta($post_id, self::KEY, true)){
@@ -340,11 +360,6 @@ class XQ_Live_Blogging{
 				$post['content'] = $content;
 				
 				array_push($response, $post);
-				
-				$response_html .= '<div class="lb-entry><div style="float: left;"><b>'.$author.'</b></div> 
-					 <div style="float: right;  font-size: 12px; color: grey;">'.$date.'</div></div> 
-					 <div style="clear: both; margin-bottom: 10px;">'.$content.'</div> \
-					 <hr />';
 			}
 		}
 		
@@ -355,7 +370,7 @@ class XQ_Live_Blogging{
 	/**
 	 * Enable the live blogging flag depending on the metabox value.
 	 */
-	public function lb_enable_live_blog($post_id) {	  
+	public function lb_enable_live_blog($post_id){	  
 		update_post_meta($post_id, self::KEY, '1');
 		
 		if (isset($_POST['lb-post-enable-box']) && 1 == $_POST['lb-post-enable-box']){
@@ -365,9 +380,7 @@ class XQ_Live_Blogging{
 			update_post_meta($post_id, self::KEY_ACTIVE, '0');
 		}
 	}
-	
-	/***********************Front-end*****************************/
-	
+		
 	/**
 	 * Action to control live blog meta boxes behavior.
 	 */
@@ -410,29 +423,32 @@ class XQ_Live_Blogging{
 			return;
 		}
 		wp_reset_postdata();
+		
+		//TODO: Here is an odd issue, why the id is displaying in the template?
+		/*
+		$post_id = the_ID();
+		if(!$this->is_liveblog_post($post_id)){
+			return;
+		}
+		*/
 	?>
 		<script src="https://ajax.googleapis.com/ajax/libs/jquery/3.2.1/jquery.min.js"></script>
 		<script type="text/javascript" >
-		jQuery(document).ready(function() {				
+		jQuery(document).ready(function(){				
 			lb_ajax_update_live_blog();					
 		});
 		
 		function lb_ajax_update_live_blog(){
-			var org_content = jQuery('.entry-content').html();			
 			var entry_html = '';
-			console.log(jQuery.find('.lb-entry'));
 			jQuery('.lb-entry').remove();
-			jQuery('.entry-content').closest(".lb-entry").remove();
 			var data = {'action': 'lb_update_live_blog', 'post_id': <?php the_ID(); ?>};
 			jQuery.post(
 				"<?php echo admin_url('admin-ajax.php'); ?>",
 				data,
 				function(response) {												
 					var posts = JSON.parse(response);
-					console.log(response);
 					
 					jQuery.each(posts, function(index, value){
-						//console.log(value['author']);
 						entry_html += '<div class="lb-entry"><div style="float: left;"><b>'+ value['author'] + '</b></div> \
 						 <div style="float: right;  font-size: 12px; color: grey;">' + value['date'] +'</div>\
 						 <div style="clear: both; margin-bottom: 10px;">' + value['content'] + '</div> \
@@ -441,11 +457,11 @@ class XQ_Live_Blogging{
 					
 					jQuery('.entry-content').append(entry_html);
 			});	
-			setTimeout(lb_ajax_update_live_blog, 60000);		
-			
+			setTimeout(lb_ajax_update_live_blog, 60000);					
 		}
 		</script>
 	<?php
+		return;
 	}	
 }
 
